@@ -6,4 +6,4 @@
   
 ## Example
 
-![Example](https://raw.githubusercontent.com/GPTechinno/bm13xx-hla/main/demo.png)
+![Example](https://raw.githubusercontent.com/GPTechinno/bm13xx-hla/master/demo.png)
