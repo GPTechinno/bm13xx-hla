@@ -2,7 +2,7 @@
   "name": "BM13xx protocol decoder",
   "apiVersion": "1.0.0",
   "author": "GPTechinno",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "BM13xx protocol decoder",
   "extensions": {
     "BM13xx protocol decoder": {
