@@ -35,14 +35,15 @@ regs_139x = {
     0x00: "chip_address",
     0x08: "freqbuf",
     0x14: "ticket",
-    0x18: "baudrate",
-    0x1c: "some_status ?", # bit 31 seems to be some busy indicator, when busy change to 0, the LSB is updated; bit[7:0] read_only; bit[15:8] read_write
+    0x18: "baudrate", # baurate calculation formula ?
+    0x1c: "some_status_?", # bit 31 seems to be some busy indicator, when busy change to 0, the LSB is updated; bit[7:0] read_only; bit[15:8] read_write
     0x20: "init_3_?",
     0x28: "init_6_?",
     0x3c: "init_4_?",
     0x40: "init_4_ack_?", # is sent after 2 consecutives write_register to init4
+    0x54: "unknown_54_?",
     0x68: "init_5_?",
-    0x70: "prefreq",
+    0x70: "prefreq", # what is the last byte for ? I have the feeling it is used with freqbuf to calculate fnal BM139x frequency
     0x80: "init_1_?",
     0x84: "init_2_?",
 }
@@ -83,10 +84,10 @@ class Hla(HighLevelAnalyzer):
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value}} CRC={{data.crc}}'
         },
         'work': {
-            'format': 'Work chip@{{data.chip}} job_id={{data.jobid}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
+            'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
         },
         'nonce': {
-            'format': 'Nonce chip@{{data.chip}} job_id={{data.jobid}} nonce={{data.value}} CRC={{data.crc}}'
+            'format': 'Nonce job_id#{{data.jobid}} midstate?{{data.midstate}} nonce={{data.value}} CRC={{data.crc}}'
         },
         # old commands
         'set_pll_divider_1': {
@@ -316,16 +317,28 @@ class Hla(HighLevelAnalyzer):
                 crc5 = raw & 0b11111
             if self._command == "respond" and raw & 0b10000000 == 0b10000000:
                 self._command = "nonce"
+            reg_name_or_address = get_reg_name(self._chip, self._regadd) if self._command == "read_register" or self._command == "write_register" or self._command == "respond" else ""
+            reg_value_raw = f"0x{self._regval:08X}" if self._command == "write_register" or self._command == "respond" or self._command == "nonce" else ""
+            reg_value = reg_value_raw
+            if reg_name_or_address == "freqbuf":
+                # from kano cgminer source, don't seems to apply to value sent by original T17 FW... 
+                fa: float = (self._regval >> 16) & 0xFF
+                fb: float = (self._regval >> 8) & 0xFF
+                f1: float = (self._regval >> 4) & 0xF
+                f2: float = self._regval & 0xF
+                freq: float = 0.0 if fb==0 or f1==0 or f2==0 else 25.0*fa/(fb*f1*f2)
+                reg_value = f"{freq:10.2f} MHz"
             # Return the data frame itself
             return AnalyzerFrame(self._command, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
                 'all': self._all,
                 'command': f"0x{self._cmd:02X}",
-                'chip': f"{self._chipadd}" if self._all == "ONE" else "ALL",
-                'register': get_reg_name(self._chip, self._regadd) if self._command == "read_register" or self._command == "write_register" or self._command == "respond" else "",
-                'value': f"0x{self._regval:08X}" if self._command == "write_register" or self._command == "respond" or self._command == "nonce" else "",
-                'jobid': f"0x{self._jobid:02X}" if self._command == "work" else f"0x{self._regadd:02X}" if self._command == "nonce" else "",
-                'midstates': f"0x{self._midstates:02X}" if self._command == "work" else "",
+                'chip': "" if self._command == "nonce" else f"{self._chipadd}" if self._all == "ONE" else "ALL",
+                'register': reg_name_or_address,
+                'value': reg_value,
+                'value_raw': reg_value_raw,
+                'jobid': f"{self._jobid}" if self._command == "work" else f"{self._regadd}" if self._command == "nonce" else "",
+                'midstate': f"{self._midstates}" if self._command == "work" else f"{self._chipadd}" if self._command == "nonce" else "", # TODO: not sure what is this byte in case of nonce, values are [0:5] but only 4 midstates per work
                 'startingnonce': f"0x{self._startingnonce:08X}" if self._command == "work" else "",
                 'nbits': f"0x{self._nbits:08X}" if self._command == "work" else "",
                 'ntime': strftime("%Y-%m-%d %H:%M:%S", gmtime(self._ntime)) if self._command == "work" else "",
