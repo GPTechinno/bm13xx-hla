@@ -33,19 +33,42 @@ regs_1387 = {
 
 regs_139x = {
     0x00: "chip_address",
-    0x08: "freqbuf",
-    0x14: "ticket",
-    0x18: "baudrate", # baurate calculation formula ?
+    0x04: "hash_rate",
+    0x08: "pll0_parameter",
+    0x0c: "chip_nonce_offset",
+    0x10: "hash_counting_number",
+    0x14: "ticket_mask",
+    0x18: "misc_control",
     0x1c: "some_status_?", # bit 31 seems to be some busy indicator, when busy change to 0, the LSB is updated; bit[7:0] read_only; bit[15:8] read_write
-    0x20: "init_3_?",
-    0x28: "init_6_?",
+    0x20: "ordered_clock_enable",
+    0x28: "fast_uart_configuration",
+    0x2c: "uart_relay",
+    0x38: "ticket_mask2",
     0x3c: "init_4_?",
     0x40: "init_4_ack_?", # is sent after 2 consecutives write_register to init4
-    0x54: "unknown_54_?",
-    0x68: "init_5_?",
-    0x70: "prefreq", # what is the last byte for ? I have the feeling it is used with freqbuf to calculate fnal BM139x frequency
-    0x80: "init_1_?",
-    0x84: "init_2_?",
+    0x44: "external_temperature_sensor_read",
+    0x48: "error_flag",
+    0x4c: "nonce_error_counter",
+    0x50: "nonce_overflow_counter",
+    0x54: "analog_mux_control",
+    0x58: "io_driver_strenght_configuration",
+    0x5c: "time_out",
+    0x60: "pll1_parameter",
+    0x64: "pll2_parameter",
+    0x68: "pll3_parameter",
+    0x6c: "ordered_clock_monitor",
+    0x70: "pll0_divider",
+    0x74: "pll1_divider",
+    0x78: "pll2_divider",
+    0x7c: "pll3_divider",
+    0x80: "clock_order_control0",
+    0x84: "clock_order_control1",
+    0x8c: "clock_order_status",
+    0x90: "frequency_sweep_control0",
+    0x94: "golden_nonce_for_sweep_return",
+    0x98: "returned_group_pattern_status",
+    0x9c: "nonce_returned_timeout",
+    0xa0: "returned_single_pattern_status",
 }
 
 def get_reg_name(chip: int, reg_add: int) -> str:
