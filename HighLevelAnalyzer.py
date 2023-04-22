@@ -39,13 +39,13 @@ regs_139x = {
     0x10: "hash_counting_number",
     0x14: "ticket_mask",
     0x18: "misc_control",
-    0x1c: "some_status_?", # bit 31 seems to be some busy indicator, when busy change to 0, the LSB is updated; bit[7:0] read_only; bit[15:8] read_write
+    0x1c: "some_temp_related",
     0x20: "ordered_clock_enable",
     0x28: "fast_uart_configuration",
     0x2c: "uart_relay",
     0x38: "ticket_mask2",
-    0x3c: "init_4_?",
-    0x40: "init_4_ack_?", # is sent after 2 consecutives write_register to init4
+    0x3c: "core_register_control",
+    0x40: "core_register_status",
     0x44: "external_temperature_sensor_read",
     0x48: "error_flag",
     0x4c: "nonce_error_counter",
