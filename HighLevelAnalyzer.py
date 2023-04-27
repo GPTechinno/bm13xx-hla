@@ -39,7 +39,7 @@ regs_139x = {
     0x10: "hash_counting_number",
     0x14: "ticket_mask",
     0x18: "misc_control",
-    0x1c: "some_temp_related",
+    0x1c: "i2c_control",
     0x20: "ordered_clock_enable",
     0x28: "fast_uart_configuration",
     0x2c: "uart_relay",
