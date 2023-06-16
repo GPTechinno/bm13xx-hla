@@ -387,12 +387,18 @@ class Hla(HighLevelAnalyzer):
                 self._pll3div4 = (self._regval >> 24) & 0b1111
             if reg_name_or_address == "misc_control":
                 analyzer_frame_type = analyzer_frame_type + "_misc"
-                blk_sel = (self._regval >> 16) & 0b1
-                bt8d = (self._regval >> 24) & 0b1111 + (self._regval >> 8) & 0b11111
-                if blk_sel == 0:
-                    reg_value = f"{self.bm_clkifreq / ((bt8d + 1) * 8)} Mbps"
+                bclk_sel = (self._regval >> 16) & 0b1
+                bt8d = ((self._regval >> 24) & 0b1111) + ((self._regval >> 8) & 0b11111)
+                baud : float = 0.0
+                if bclk_sel == 0:
+                    baud = self.bm_clkifreq / ((bt8d + 1) * 8)
                 else:
-                    reg_value = f"{self._pll3freq / ((self._pll3div4 + 1) * (bt8d + 1) * 8)} Mbps"
+                    baud = self._pll3freq / ((self._pll3div4 + 1) * (bt8d + 1) * 8)
+                if baud > 1.0:
+                    reg_value = f"{baud:10.6f}Mbps"
+                else:
+                    baud = baud * 1E6
+                    reg_value = f"{baud:10.0f}bps"
             # Return the data frame itself
             return AnalyzerFrame(analyzer_frame_type, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
