@@ -1,7 +1,7 @@
 # High Level Analyzer
 # For more information and documentation, please go to https://support.saleae.com/extensions/high-level-analyzer-extensions
 
-from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, ChoicesSetting
+from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, ChoicesSetting, NumberSetting
 from time import gmtime, strftime
 
 regs_1385 = {
@@ -87,7 +87,8 @@ def get_reg_name(chip: int, reg_add: int) -> str:
 class Hla(HighLevelAnalyzer):
     """BM13xx High Level Analyzer."""
 
-    bm_family = ChoicesSetting(['BM138x', 'BM139x'])
+    bm_family = ChoicesSetting(['BM1397', 'BM1385'], label='ASIC')
+    bm_clkifreq = NumberSetting(label='CLKI frequency [MHz]', min_value=25, max_value=100)
 
     # An optional list of types this analyzer produces, providing a way to customize the way frames are displayed in Logic 2.
     result_types = {
@@ -95,7 +96,13 @@ class Hla(HighLevelAnalyzer):
             'format': 'Set Address chip@{{data.chip}} CRC={{data.crc}}'
         },
         'write_register': {
-            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value}} CRC={{data.crc}}'
+            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} CRC={{data.crc}}'
+        },
+        'write_register_pll': {
+            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} freq={{data.value}} CRC={{data.crc}}'
+        },
+        'write_register_misc': {
+            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
         },
         'chain_inactive': {
             'format': 'Chain Inactive CRC={{data.crc}}'
@@ -104,7 +111,13 @@ class Hla(HighLevelAnalyzer):
             'format': 'Read Register chip@{{data.chip}} reg@{{data.register}} CRC={{data.crc}}'
         },
         'respond': {
-            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value}} CRC={{data.crc}}'
+            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} CRC={{data.crc}}'
+        },
+        'respond_pll': {
+            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} freq={{data.value}} CRC={{data.crc}}'
+        },
+        'respond_misc': {
+            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
         },
         'work': {
             'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
@@ -127,6 +140,14 @@ class Hla(HighLevelAnalyzer):
         }
     }
 
+    def get_pll_frequency(self, pll_param: int) -> int:
+        """Compute the PLL Frequency based on its paramaters"""
+        fb_div = (pll_param >> 16) & 0xfff
+        ref_div = (pll_param >> 8) & 0b11111
+        post_div_1 = (pll_param >> 4) & 0b111
+        post_div_2 = (pll_param >> 0) & 0b111
+        return 0 if ref_div==0 or post_div_1==0 or post_div_2==0 else self.bm_clkifreq * fb_div / (ref_div * post_div_1 * post_div_2)
+
     def __init__(self):
         # current byte position
         self._byte_pos: int = 0
@@ -142,7 +163,7 @@ class Hla(HighLevelAnalyzer):
         self._cmd: int = 99
         self._command: str = ""
         # datas
-        self._chip: int = 1387 if self.bm_family == "BM138x" else 1397
+        self._chip: int = 1387 if self.bm_family == "BM1387" else 1397
         self._chipadd: int = 0
         self._regadd: int = 0
         self._regval: int = 0
@@ -157,18 +178,22 @@ class Hla(HighLevelAnalyzer):
         self._refdiv: int = 0
         self._postdiv1: int = 0
         self._postdiv2: int = 0
+        # baudrate
+        self._baudrate: int = 115200
+        self._pll3freq: int = self.get_pll_frequency(0x00700111)
+        self._pll3div4: int = 6
 
     def decode(self, frame: AnalyzerFrame):
         if 'error' in frame.data:
             return
         raw = frame.data['data'][0]
         preamble_offset = 0
-        if self.bm_family == "BM139x":
+        if self.bm_family == "BM1397":
             preamble_offset += 2
         if self._byte_pos == 0:
             self._command = ""
             self._start_of_frame = frame.start_time
-            if self.bm_family == "BM139x" and raw == 0xAA:
+            if self.bm_family == "BM1397" and raw == 0xAA:
                 self._frame_len = 7
                 self._command = "respond"
         if self._command == "respond":
@@ -214,7 +239,7 @@ class Hla(HighLevelAnalyzer):
                         self._all = "ONE"
                     self._frame_len = 4
                 self._cmd = raw & 0b1111
-                if self.bm_family == "BM138x":
+                if self.bm_family == "BM1387":
                     if self._cmd == 1:
                         self._command = "set_chipadd"
                     elif self._cmd == 2:
@@ -235,7 +260,7 @@ class Hla(HighLevelAnalyzer):
                         self._command = "write_register"
                     else:
                         self._command = "unknown"
-                elif self.bm_family == "BM139x":
+                elif self.bm_family == "BM1397":
                     if self._cmd == 0:
                         self._command = "set_chipadd"
                     elif self._cmd == 1:
@@ -343,16 +368,33 @@ class Hla(HighLevelAnalyzer):
             reg_name_or_address = get_reg_name(self._chip, self._regadd) if self._command == "read_register" or self._command == "write_register" or self._command == "respond" else ""
             reg_value_raw = f"0x{self._regval:08X}" if self._command == "write_register" or self._command == "respond" or self._command == "nonce" else ""
             reg_value = reg_value_raw
+            analyzer_frame_type = self._command
             if reg_name_or_address == "freqbuf":
                 # from kano cgminer source, don't seems to apply to value sent by original T17 FW... 
                 fa: float = (self._regval >> 16) & 0xFF
                 fb: float = (self._regval >> 8) & 0xFF
                 f1: float = (self._regval >> 4) & 0xF
                 f2: float = self._regval & 0xF
-                freq: float = 0.0 if fb==0 or f1==0 or f2==0 else 25.0*fa/(fb*f1*f2)
+                freq: float = 0.0 if fb==0 or f1==0 or f2==0 else self.bm_clkifreq*fa/(fb*f1*f2)
                 reg_value = f"{freq:10.2f} MHz"
+            if reg_name_or_address == "pll0_parameter" or reg_name_or_address == "pll1_parameter" or reg_name_or_address == "pll2_parameter" or reg_name_or_address == "pll3_parameter":
+                analyzer_frame_type = analyzer_frame_type + "_pll"
+                freq = self.get_pll_frequency(self._regval)
+                if reg_name_or_address == "pll3_parameter":
+                    self._pll3freq = freq
+                reg_value = f"{freq} MHz"
+            if reg_name_or_address == "fast_uart_configuration":
+                self._pll3div4 = (self._regval >> 24) & 0b1111
+            if reg_name_or_address == "misc_control":
+                analyzer_frame_type = analyzer_frame_type + "_misc"
+                blk_sel = (self._regval >> 16) & 0b1
+                bt8d = (self._regval >> 24) & 0b1111 + (self._regval >> 8) & 0b11111
+                if blk_sel == 0:
+                    reg_value = f"{self.bm_clkifreq / ((bt8d + 1) * 8)} Mbps"
+                else:
+                    reg_value = f"{self._pll3freq / ((self._pll3div4 + 1) * (bt8d + 1) * 8)} Mbps"
             # Return the data frame itself
-            return AnalyzerFrame(self._command, self._start_of_frame, frame.end_time, {
+            return AnalyzerFrame(analyzer_frame_type, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
                 'all': self._all,
                 'command': f"0x{self._cmd:02X}",
