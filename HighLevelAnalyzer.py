@@ -1,6 +1,7 @@
 # High Level Analyzer
 # For more information and documentation, please go to https://support.saleae.com/extensions/high-level-analyzer-extensions
 
+from distutils import core
 from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, ChoicesSetting, NumberSetting
 from time import gmtime, strftime
 
@@ -83,6 +84,25 @@ def get_reg_name(chip: int, reg_add: int) -> str:
     except KeyError:
         return f"0x{reg_add:02X}"
 
+core_regs_1397 = {
+    0: "clock_delay_ctrl",
+    1: "process_monitor_ctrl",
+    2: "process_monitor_data",
+    3: "core_error",
+    4: "core_enable",
+    5: "hash_clock_ctrl",
+    6: "hash_clock_counter",
+    7: "sweep_clock_ctrl",
+}
+
+def get_core_reg_name(chip: int, reg_id: int) -> str:
+    """Get the core register name by address."""
+    try:
+        if chip == 1397:
+            return core_regs_1397[reg_id]
+    except KeyError:
+        return f"0x{reg_id:02X}"
+
 # High level analyzers must subclass the HighLevelAnalyzer class.
 class Hla(HighLevelAnalyzer):
     """BM13xx High Level Analyzer."""
@@ -104,6 +124,9 @@ class Hla(HighLevelAnalyzer):
         'write_register_misc': {
             'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
         },
+        'write_register_core': {
+            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}}  core_id={{data.core_id}} core_reg{{data.value}} CRC={{data.crc}}'
+        },
         'chain_inactive': {
             'format': 'Chain Inactive CRC={{data.crc}}'
         },
@@ -118,6 +141,9 @@ class Hla(HighLevelAnalyzer):
         },
         'respond_misc': {
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
+        },
+        'respond_core': {
+            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} core_id={{data.core_id}} core_reg_val={{data.value}} CRC={{data.crc}}'
         },
         'work': {
             'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
@@ -368,6 +394,7 @@ class Hla(HighLevelAnalyzer):
             reg_name_or_address = get_reg_name(self._chip, self._regadd) if self._command == "read_register" or self._command == "write_register" or self._command == "respond" else ""
             reg_value_raw = f"0x{self._regval:08X}" if self._command == "write_register" or self._command == "respond" or self._command == "nonce" else ""
             reg_value = reg_value_raw
+            core_id = 0
             analyzer_frame_type = self._command
             if reg_name_or_address == "freqbuf":
                 # from kano cgminer source, don't seems to apply to value sent by original T17 FW... 
@@ -399,6 +426,20 @@ class Hla(HighLevelAnalyzer):
                 else:
                     baud = baud * 1E6
                     reg_value = f"{baud:10.0f}bps"
+            if reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status":
+                analyzer_frame_type = analyzer_frame_type + "_core"
+                if reg_name_or_address == "core_register_control":
+                    core_id = (self._regval >> 16) & 0xff
+                    core_reg_id = (self._regval >> 8) & 0xf
+                    core_reg_val = (self._regval >> 0) & 0xff
+                    if (self._regval >> 31) & 0b1 == 0b1:
+                        reg_value = f"WR@{get_core_reg_name(self._chip, core_reg_id)}=0x{core_reg_val:02X}"
+                    else:
+                        reg_value = f"RD@{get_core_reg_name(self._chip, core_reg_id)}"
+                else:
+                    core_id = (self._regval >> 16) & 0xffff
+                    core_reg_val = (self._regval >> 0) & 0xffff
+                    reg_value = f"0x{core_reg_val:04X}"
             # Return the data frame itself
             return AnalyzerFrame(analyzer_frame_type, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
@@ -408,6 +449,7 @@ class Hla(HighLevelAnalyzer):
                 'register': reg_name_or_address,
                 'value': reg_value,
                 'value_raw': reg_value_raw,
+                'core_id': f"{core_id}",
                 'jobid': f"{self._jobid}" if self._command == "work" else f"{self._regadd}" if self._command == "nonce" else "",
                 'midstate': f"{self._midstates}" if self._command == "work" else f"{self._chipadd}" if self._command == "nonce" else "", # TODO: not sure what is this byte in case of nonce, values are [0:5] but only 4 midstates per work
                 'startingnonce': f"0x{self._startingnonce:08X}" if self._command == "work" else "",
