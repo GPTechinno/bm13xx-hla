@@ -127,6 +127,9 @@ class Hla(HighLevelAnalyzer):
         'write_register_core': {
             'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}}  core_id={{data.core_id}} core_reg{{data.value}} CRC={{data.crc}}'
         },
+        'write_register_i2c': {
+            'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} i2c:{{data.value}} CRC={{data.crc}}'
+        },
         'chain_inactive': {
             'format': 'Chain Inactive CRC={{data.crc}}'
         },
@@ -144,6 +147,9 @@ class Hla(HighLevelAnalyzer):
         },
         'respond_core': {
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} core_id={{data.core_id}} core_reg_val={{data.value}} CRC={{data.crc}}'
+        },
+        'respond_i2c': {
+            'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} i2c:{{data.value}} CRC={{data.crc}}'
         },
         'work': {
             'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
@@ -208,6 +214,8 @@ class Hla(HighLevelAnalyzer):
         self._baudrate: int = 115200
         self._pll3freq: int = self.get_pll_frequency(0x00700111)
         self._pll3div4: int = 6
+        # i2c
+        self._i2cwrite: bool = False
 
     def decode(self, frame: AnalyzerFrame):
         if 'error' in frame.data:
@@ -404,15 +412,15 @@ class Hla(HighLevelAnalyzer):
                 f2: float = self._regval & 0xF
                 freq: float = 0.0 if fb==0 or f1==0 or f2==0 else self.bm_clkifreq*fa/(fb*f1*f2)
                 reg_value = f"{freq:10.2f} MHz"
-            if reg_name_or_address == "pll0_parameter" or reg_name_or_address == "pll1_parameter" or reg_name_or_address == "pll2_parameter" or reg_name_or_address == "pll3_parameter":
+            elif reg_name_or_address == "pll0_parameter" or reg_name_or_address == "pll1_parameter" or reg_name_or_address == "pll2_parameter" or reg_name_or_address == "pll3_parameter":
                 analyzer_frame_type = analyzer_frame_type + "_pll"
                 freq = self.get_pll_frequency(self._regval)
                 if reg_name_or_address == "pll3_parameter":
                     self._pll3freq = freq
                 reg_value = f"{freq} MHz"
-            if reg_name_or_address == "fast_uart_configuration":
+            elif reg_name_or_address == "fast_uart_configuration":
                 self._pll3div4 = (self._regval >> 24) & 0b1111
-            if reg_name_or_address == "misc_control":
+            elif reg_name_or_address == "misc_control":
                 analyzer_frame_type = analyzer_frame_type + "_misc"
                 bclk_sel = (self._regval >> 16) & 0b1
                 bt8d = ((self._regval >> 24) & 0b1111) + ((self._regval >> 8) & 0b11111)
@@ -426,7 +434,7 @@ class Hla(HighLevelAnalyzer):
                 else:
                     baud = baud * 1E6
                     reg_value = f"{baud:10.0f}bps"
-            if reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status":
+            elif reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status":
                 analyzer_frame_type = analyzer_frame_type + "_core"
                 if reg_name_or_address == "core_register_control":
                     core_id = (self._regval >> 16) & 0xff
@@ -440,6 +448,26 @@ class Hla(HighLevelAnalyzer):
                     core_id = (self._regval >> 16) & 0xffff
                     core_reg_val = (self._regval >> 0) & 0xffff
                     reg_value = f"0x{core_reg_val:04X}"
+            elif reg_name_or_address == "i2c_control" and self._command != "read_register":
+                analyzer_frame_type = analyzer_frame_type + "_i2c"
+                i2c_addr = (self._regval >> 17) & 0x7f
+                i2c_reg_addr = (self._regval >> 8) & 0xff
+                i2c_reg_val = (self._regval >> 0) & 0xff
+                if self._command == "write_register":
+                    if (self._regval >> 16) & 0b1 == 0b1: # RD#/WR
+                        self._i2cwrite = True
+                        reg_value = f"WR@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}=0x{i2c_reg_val:02X}"
+                    else:
+                        self._i2cwrite = False
+                        reg_value = f"RD@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}"
+                elif self._command == "respond":
+                    if (self._regval >> 31) & 0b1 == 0b1: # BUSY
+                        reg_value = f"busy"
+                    else:
+                        if self._i2cwrite: # bug: always false (as the __init__ value), look like the assign above are not remembered...
+                            reg_value = f"Write done"
+                        else:
+                            reg_value = f"RD@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}=0x{i2c_reg_val:02X}"
             # Return the data frame itself
             return AnalyzerFrame(analyzer_frame_type, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
