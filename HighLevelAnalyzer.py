@@ -406,10 +406,13 @@ class Hla(HighLevelAnalyzer):
                 crc5 = raw & 0b11111
             if self._command == "respond" and raw & 0b10000000 == 0b10000000:
                 self._command = "nonce"
-                if self.bm_midstates_cnt == 4:
+                if self.bm_midstates_cnt == 8:
+                    self._jobid = self._regadd & 0b11111000
+                    self._midstates = self._regadd & 0b111
+                elif self.bm_midstates_cnt == 4:
                     self._jobid = self._regadd & 0b11111100
                     self._midstates = self._regadd & 0b11
-                if self.bm_midstates_cnt == 2:
+                elif self.bm_midstates_cnt == 2:
                     self._jobid = self._regadd & 0b11111110
                     self._midstates = self._regadd & 0b1
                 else:
