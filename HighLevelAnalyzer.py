@@ -111,7 +111,7 @@ class Hla(HighLevelAnalyzer):
 
     bm_family = ChoicesSetting(['BM1366', 'BM1397', 'BM1385'], label='ASIC')
     bm_clkifreq = NumberSetting(label='CLKI frequency [MHz]', min_value=25, max_value=100)
-    bm_midstates_cnt = NumberSetting(label='Midstates Count', min_value=1, max_value=4)
+    bm_midstates_cnt = NumberSetting(label='Midstates Count', min_value=1, max_value=8)
 
     result_types = {
         'set_chipadd': {
