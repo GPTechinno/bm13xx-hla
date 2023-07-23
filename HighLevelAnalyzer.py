@@ -100,6 +100,8 @@ def get_core_reg_name(chip: int, reg_id: int) -> str:
     try:
         if chip == 1397:
             return core_regs_1397[reg_id]
+        else:
+            return core_regs_1397[reg_id]+"?"
     except KeyError:
         return f"0x{reg_id:02X}"
 
@@ -107,11 +109,10 @@ def get_core_reg_name(chip: int, reg_id: int) -> str:
 class Hla(HighLevelAnalyzer):
     """BM13xx High Level Analyzer."""
 
-    bm_family = ChoicesSetting(['BM1397', 'BM1385'], label='ASIC')
+    bm_family = ChoicesSetting(['BM1366', 'BM1397', 'BM1385'], label='ASIC')
     bm_clkifreq = NumberSetting(label='CLKI frequency [MHz]', min_value=25, max_value=100)
     bm_midstates_cnt = NumberSetting(label='Midstates Count', min_value=1, max_value=4)
 
-    # An optional list of types this analyzer produces, providing a way to customize the way frames are displayed in Logic 2.
     result_types = {
         'set_chipadd': {
             'format': 'Set Address chip@{{data.chip}} CRC={{data.crc}}'
@@ -196,17 +197,17 @@ class Hla(HighLevelAnalyzer):
         self._cmd: int = 99
         self._command: str = ""
         # datas
-        self._chip: int = 1387 if self.bm_family == "BM1387" else 1397
+        self._chip: int = 1387 if self.bm_family == "BM1387" else 1397 if self.bm_family == "BM1397" else 1366
         self._chipadd: int = 0
         self._regadd: int = 0
         self._regval: int = 0
         self._jobid: int = 0
         self._midstates: int = 0
-        self._startingnonce: int  = 0
-        self._nbits: int  = 0
-        self._ntime: int  = 0
+        self._startingnonce: int = 0
+        self._nbits: int = 0
+        self._ntime: int = 0
         self._merkleroot: int  = 0
-        self._crc16: int  = 0
+        self._crc16: int = 0
         self._fbdiv: int = 0
         self._refdiv: int = 0
         self._postdiv1: int = 0
@@ -223,13 +224,16 @@ class Hla(HighLevelAnalyzer):
             return
         raw = frame.data['data'][0]
         preamble_offset = 0
-        if self.bm_family == "BM1397":
+        if self.bm_family == "BM1397" or self.bm_family == "BM1366":
             preamble_offset += 2
         if self._byte_pos == 0:
             self._command = ""
             self._start_of_frame = frame.start_time
             if self.bm_family == "BM1397" and raw == 0xAA:
                 self._frame_len = 7
+                self._command = "respond"
+            if self.bm_family == "BM1366" and raw == 0xAA:
+                self._frame_len = 9
                 self._command = "respond"
         if self._command == "respond":
             if self._byte_pos == 0 + preamble_offset:
@@ -295,7 +299,7 @@ class Hla(HighLevelAnalyzer):
                         self._command = "write_register"
                     else:
                         self._command = "unknown"
-                elif self.bm_family == "BM1397":
+                elif self.bm_family == "BM1397" or self.bm_family == "BM1366":
                     if self._cmd == 0:
                         self._command = "set_chipadd"
                     elif self._cmd == 1:
@@ -312,6 +316,8 @@ class Hla(HighLevelAnalyzer):
             if self._byte_pos == (1 + preamble_offset) and self._frame_type == "VIL":
                 # VIL
                 self._frame_len = raw
+                if self.bm_family == "BM1366" and self._command == "work":
+                    self._frame_len += 32
             if self._command == "set_chipadd":
                 if self._byte_pos == (1 + preamble_offset + self._vil_offset):
                     print(self._byte_pos,preamble_offset,self._vil_offset)
@@ -464,14 +470,14 @@ class Hla(HighLevelAnalyzer):
                 i2c_reg_addr = (self._regval >> 8) & 0xff
                 i2c_reg_val = (self._regval >> 0) & 0xff
                 if self._command == "write_register":
-                    if (self._regval >> 16) & 0b1 == 0b1: # RD#/WR
+                    if ((self._regval >> 16) & 0b1) == 0b1: # RD#/WR
                         self._i2cwrite = True
                         reg_value = f"WR@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}=0x{i2c_reg_val:02X}"
                     else:
                         self._i2cwrite = False
                         reg_value = f"RD@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}"
                 elif self._command == "respond":
-                    if (self._regval >> 31) & 0b1 == 0b1: # BUSY
+                    if ((self._regval >> 31) & 0b1) == 0b1: # BUSY
                         reg_value = f"busy"
                     else:
                         if self._i2cwrite: # bug: always false (as the __init__ value), look like the assign above are not remembered...
