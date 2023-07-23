@@ -2,6 +2,7 @@
 # For more information and documentation, please go to https://support.saleae.com/extensions/high-level-analyzer-extensions
 
 from distutils import core
+from struct import pack, unpack
 from saleae.analyzers import HighLevelAnalyzer, AnalyzerFrame, ChoicesSetting, NumberSetting
 from time import gmtime, strftime
 
@@ -105,6 +106,12 @@ def get_core_reg_name(chip: int, reg_id: int) -> str:
     except KeyError:
         return f"0x{reg_id:02X}"
 
+def swap32(hash: bytearray) -> bytearray:
+    """Swap 32bits elements"""
+    for i in range(0, len(hash), 4):
+        hash[i], hash[i+1], hash[i+2], hash[i+3] = hash[i+3], hash[i+2], hash[i+1], hash[i]
+    return hash
+
 # High level analyzers must subclass the HighLevelAnalyzer class.
 class Hla(HighLevelAnalyzer):
     """BM13xx High Level Analyzer."""
@@ -154,7 +161,7 @@ class Hla(HighLevelAnalyzer):
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} i2c:{{data.value}} CRC={{data.crc}}'
         },
         'work': {
-            'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
+            'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} CRC={{data.crc}}'
         },
         'nonce': {
             'format': 'Nonce job_id#{{data.jobid}} midstate_id#{{data.midstate}} nonce={{data.value}} CRC={{data.crc}}'
@@ -201,13 +208,18 @@ class Hla(HighLevelAnalyzer):
         self._chipadd: int = 0
         self._regadd: int = 0
         self._regval: int = 0
+        # work
         self._jobid: int = 0
         self._midstates: int = 0
         self._startingnonce: int = 0
         self._nbits: int = 0
         self._ntime: int = 0
-        self._merkleroot: int  = 0
+        self._merkleroot: int = 0
+        self._merkle_root_hash = bytearray(b'')
+        self._previous_block_hash = bytearray(b'')
+        self._version: int = 0
         self._crc16: int = 0
+        # pll
         self._fbdiv: int = 0
         self._refdiv: int = 0
         self._postdiv1: int = 0
@@ -369,15 +381,29 @@ class Hla(HighLevelAnalyzer):
                     self._ntime += (raw << 16)
                 elif self._byte_pos == 14 + preamble_offset + self._vil_offset:
                     self._ntime += (raw << 24)
-                elif self._byte_pos == 15 + preamble_offset + self._vil_offset:
-                    self._merkleroot = (raw)
-                elif self._byte_pos == 16 + preamble_offset + self._vil_offset:
-                    self._merkleroot += (raw << 8)
-                elif self._byte_pos == 17 + preamble_offset + self._vil_offset:
-                    self._merkleroot += (raw << 16)
-                elif self._byte_pos == 18 + preamble_offset + self._vil_offset:
-                    self._merkleroot += (raw << 24)
-                # following are {self._midstates} midstates of 33 bytes each
+                if self.bm_family == "BM1366":
+                    if (self._byte_pos >= 15 + preamble_offset + self._vil_offset) and (self._byte_pos < 47 + preamble_offset + self._vil_offset):
+                        self._merkle_root_hash.append(raw)
+                    elif (self._byte_pos >= 47 + preamble_offset + self._vil_offset) and (self._byte_pos < 79 + preamble_offset + self._vil_offset):
+                        self._previous_block_hash.append(raw)
+                    elif self._byte_pos == 79 + preamble_offset + self._vil_offset:
+                        self._version = (raw)
+                    elif self._byte_pos == 80 + preamble_offset + self._vil_offset:
+                        self._version += (raw << 8)
+                    elif self._byte_pos == 81 + preamble_offset + self._vil_offset:
+                        self._version += (raw << 16)
+                    elif self._byte_pos == 82 + preamble_offset + self._vil_offset:
+                        self._version += (raw << 24)
+                else:
+                    if self._byte_pos == 15 + preamble_offset + self._vil_offset:
+                        self._merkleroot = (raw)
+                    elif self._byte_pos == 16 + preamble_offset + self._vil_offset:
+                        self._merkleroot += (raw << 8)
+                    elif self._byte_pos == 17 + preamble_offset + self._vil_offset:
+                        self._merkleroot += (raw << 16)
+                    elif self._byte_pos == 18 + preamble_offset + self._vil_offset:
+                        self._merkleroot += (raw << 24)
+                    # following are {self._midstates} midstates of 33 bytes each
             elif self._command == "set_pll_divider_1":
                 if self._byte_pos == 1 + preamble_offset + self._vil_offset:
                     self._fbdiv = raw << 5
@@ -397,8 +423,6 @@ class Hla(HighLevelAnalyzer):
                 self._crc16 = raw << 8
         if self._byte_pos == self._frame_len - 1 + preamble_offset:
             # last byte of frame
-            self._byte_pos = 0
-            self._frame_len = 99
             # check CRC
             if self._command == "work":
                 self._crc16 += raw
@@ -487,6 +511,21 @@ class Hla(HighLevelAnalyzer):
                             reg_value = f"Write done"
                         else:
                             reg_value = f"RD@0x{i2c_addr:02X}@0x{i2c_reg_addr:02X}=0x{i2c_reg_val:02X}"
+            merkle_root = ""
+            prev_hash = ""
+            block_vers = ""
+            if self._command == "work":
+                if self.bm_family == "BM1366":
+                    merkle_root = ''.join(format(x, '02x') for x in swap32(self._merkle_root_hash)) if len(self._merkle_root_hash) > 0 else "None"
+                    prev_hash = ''.join(format(x, '02x') for x in swap32(self._previous_block_hash)) if len(self._previous_block_hash) > 0 else "None"
+                    block_vers = f"{self._version:08X}"
+                else:
+                    merkle_root = f"{self._merkleroot:08X}"
+            # init vars                                
+            self._byte_pos = 0
+            self._frame_len = 99
+            self._merkle_root_hash = bytearray(b'')
+            self._previous_block_hash = bytearray(b'')
             # Return the data frame itself
             return AnalyzerFrame(analyzer_frame_type, self._start_of_frame, frame.end_time, {
                 'frame_type': self._frame_type,
@@ -502,7 +541,9 @@ class Hla(HighLevelAnalyzer):
                 'startingnonce': f"0x{self._startingnonce:08X}" if self._command == "work" else "",
                 'nbits': f"0x{self._nbits:08X}" if self._command == "work" else "",
                 'ntime': strftime("%Y-%m-%d %H:%M:%S", gmtime(self._ntime)) if self._command == "work" else "",
-                'merkleroot': f"0x{self._merkleroot:08X}" if self._command == "work" else "",
+                'merkleroot': merkle_root,
+                'prevhash': prev_hash,
+                'blockvers': block_vers,                
                 'fbdiv': f"0x{self._fbdiv:02X}",
                 'refdiv': f"0x{self._refdiv:02X}",
                 'postdiv1': f"0x{self._postdiv1:04X}",
