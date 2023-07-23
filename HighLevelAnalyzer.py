@@ -109,6 +109,7 @@ class Hla(HighLevelAnalyzer):
 
     bm_family = ChoicesSetting(['BM1397', 'BM1385'], label='ASIC')
     bm_clkifreq = NumberSetting(label='CLKI frequency [MHz]', min_value=25, max_value=100)
+    bm_midstates_cnt = NumberSetting(label='Midstates Count', min_value=1, max_value=4)
 
     # An optional list of types this analyzer produces, providing a way to customize the way frames are displayed in Logic 2.
     result_types = {
@@ -155,7 +156,7 @@ class Hla(HighLevelAnalyzer):
             'format': 'Work job_id#{{data.jobid}} midstates_cnt#{{data.midstate}} nbits={{data.nbits}} ntime={{data.ntime}} merkle_root={{data.merkleroot}} CRC={{data.crc}}'
         },
         'nonce': {
-            'format': 'Nonce job_id#{{data.jobid}} midstate?{{data.midstate}} nonce={{data.value}} CRC={{data.crc}}'
+            'format': 'Nonce job_id#{{data.jobid}} midstate_id#{{data.midstate}} nonce={{data.value}} CRC={{data.crc}}'
         },
         # old commands
         'set_pll_divider_1': {
@@ -399,6 +400,15 @@ class Hla(HighLevelAnalyzer):
                 crc5 = raw & 0b11111
             if self._command == "respond" and raw & 0b10000000 == 0b10000000:
                 self._command = "nonce"
+                if self.bm_midstates_cnt == 4:
+                    self._jobid = self._regadd & 0b11111100
+                    self._midstates = self._regadd & 0b11
+                if self.bm_midstates_cnt == 2:
+                    self._jobid = self._regadd & 0b11111110
+                    self._midstates = self._regadd & 0b1
+                else:
+                    self._jobid = self._regadd
+                    self._midstates = 0
             reg_name_or_address = get_reg_name(self._chip, self._regadd) if self._command == "read_register" or self._command == "write_register" or self._command == "respond" else ""
             reg_value_raw = f"0x{self._regval:08X}" if self._command == "write_register" or self._command == "respond" or self._command == "nonce" else ""
             reg_value = reg_value_raw
@@ -477,9 +487,9 @@ class Hla(HighLevelAnalyzer):
                 'register': reg_name_or_address,
                 'value': reg_value,
                 'value_raw': reg_value_raw,
-                'core_id': f"{core_id}",
-                'jobid': f"{self._jobid}" if self._command == "work" else f"{self._regadd}" if self._command == "nonce" else "",
-                'midstate': f"{self._midstates}" if self._command == "work" else f"{self._chipadd}" if self._command == "nonce" else "", # TODO: not sure what is this byte in case of nonce, values are [0:5] but only 4 midstates per work
+                'core_id': f"{core_id}" if (reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status") else "",
+                'jobid': f"{self._jobid}" if (self._command == "work" or self._command == "nonce") else "",
+                'midstate': f"{self._midstates}" if (self._command == "work" or self._command == "nonce") else "",
                 'startingnonce': f"0x{self._startingnonce:08X}" if self._command == "work" else "",
                 'nbits': f"0x{self._nbits:08X}" if self._command == "work" else "",
                 'ntime': strftime("%Y-%m-%d %H:%M:%S", gmtime(self._ntime)) if self._command == "work" else "",
