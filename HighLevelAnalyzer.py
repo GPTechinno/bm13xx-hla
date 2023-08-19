@@ -71,6 +71,7 @@ regs_139x = {
     0x98: "returned_group_pattern_status",
     0x9c: "nonce_returned_timeout",
     0xa0: "returned_single_pattern_status",
+    0xa4: "version_rolling",
 }
 
 def get_reg_name(chip: int, reg_add: int) -> str:
@@ -218,6 +219,7 @@ class Hla(HighLevelAnalyzer):
         self._merkle_root_hash = bytearray(b'')
         self._previous_block_hash = bytearray(b'')
         self._version: int = 0
+        self._version_bits: int = 0
         self._crc16: int = 0
         # pll
         self._fbdiv: int = 0
@@ -264,6 +266,10 @@ class Hla(HighLevelAnalyzer):
                     self._all = "ONE"
             elif self._byte_pos == 5 + preamble_offset:
                 self._regadd = raw
+            elif self._byte_pos == 6 + preamble_offset:
+                self._version_bits = (raw << 8)
+            elif self._byte_pos == 7 + preamble_offset:
+                self._version_bits += (raw)
         else:
             if self._byte_pos == 0 + preamble_offset:
                 input_length_type = (raw >> 5) & 0b111
@@ -518,7 +524,7 @@ class Hla(HighLevelAnalyzer):
                 if self.bm_family == "BM1366":
                     merkle_root = ''.join(format(x, '02x') for x in swap32(self._merkle_root_hash)) if len(self._merkle_root_hash) > 0 else "None"
                     prev_hash = ''.join(format(x, '02x') for x in swap32(self._previous_block_hash)) if len(self._previous_block_hash) > 0 else "None"
-                    block_vers = f"{self._version:08X}"
+                    block_vers = f"0x{self._version:08X}"
                 else:
                     merkle_root = f"{self._merkleroot:08X}"
             # init vars                                
@@ -535,6 +541,7 @@ class Hla(HighLevelAnalyzer):
                 'register': reg_name_or_address,
                 'value': reg_value,
                 'value_raw': reg_value_raw,
+                'versionbits': f"0x{self._version_bits:04X}" if self._command == "nonce" and self.bm_family == "BM1366" else "",
                 'core_id': f"{core_id}" if (reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status") else "",
                 'jobid': f"{self._jobid}" if (self._command == "work" or self._command == "nonce") else "",
                 'midstate': f"{self._midstates}" if (self._command == "work" or self._command == "nonce") else "",
@@ -543,7 +550,7 @@ class Hla(HighLevelAnalyzer):
                 'ntime': strftime("%Y-%m-%d %H:%M:%S", gmtime(self._ntime)) if self._command == "work" else "",
                 'merkleroot': merkle_root,
                 'prevhash': prev_hash,
-                'blockvers': block_vers,                
+                'blockvers': block_vers,
                 'fbdiv': f"0x{self._fbdiv:02X}",
                 'refdiv': f"0x{self._refdiv:02X}",
                 'postdiv1': f"0x{self._postdiv1:04X}",
