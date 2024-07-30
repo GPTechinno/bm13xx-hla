@@ -131,7 +131,7 @@ class Hla(HighLevelAnalyzer):
         'write_register_pll': {
             'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} freq={{data.value}} CRC={{data.crc}}'
         },
-        'write_register_misc': {
+        'write_register_baud': {
             'format': 'Write Register chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
         },
         'write_register_core': {
@@ -152,7 +152,7 @@ class Hla(HighLevelAnalyzer):
         'respond_pll': {
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} freq={{data.value}} CRC={{data.crc}}'
         },
-        'respond_misc': {
+        'respond_baud': {
             'format': 'Respond chip@{{data.chip}} reg@{{data.register}}={{data.value_raw}} baud={{data.value}} CRC={{data.crc}}'
         },
         'respond_core': {
@@ -188,7 +188,7 @@ class Hla(HighLevelAnalyzer):
         ref_div = (pll_param >> 8) & 0b11111
         post_div_1 = (pll_param >> 4) & 0b111
         post_div_2 = (pll_param >> 0) & 0b111
-        return 0 if ref_div==0 or post_div_1==0 or post_div_2==0 else self.bm_clkifreq * fb_div / (ref_div * post_div_1 * post_div_2)
+        return 0 if ref_div==0 else self.bm_clkifreq * fb_div / (ref_div * (post_div_1+1) * (post_div_2+1))
 
     def __init__(self):
         # current byte position
@@ -228,8 +228,8 @@ class Hla(HighLevelAnalyzer):
         self._postdiv2: int = 0
         # baudrate
         self._baudrate: int = 115200
-        self._pll3freq: int = self.get_pll_frequency(0x00700111)
-        self._pll3div4: int = 6
+        self._pll_uart_freq: int = self.get_pll_frequency(0x00700111)
+        self._pll_uart_div4: int = 6
         # i2c
         self._i2cwrite: bool = False
 
@@ -464,25 +464,44 @@ class Hla(HighLevelAnalyzer):
             elif reg_name_or_address == "pll0_parameter" or reg_name_or_address == "pll1_parameter" or reg_name_or_address == "pll2_parameter" or reg_name_or_address == "pll3_parameter":
                 analyzer_frame_type = analyzer_frame_type + "_pll"
                 freq = self.get_pll_frequency(self._regval)
-                if reg_name_or_address == "pll3_parameter":
-                    self._pll3freq = freq
+                if reg_name_or_address == "pll3_parameter" and self.bm_family == "BM1397":
+                    self._pll_uart_freq = freq
+                if reg_name_or_address == "pll1_parameter" and self.bm_family == "BM1366":
+                    self._pll_uart_freq = freq
                 reg_value = f"{freq} MHz"
             elif reg_name_or_address == "fast_uart_configuration":
-                self._pll3div4 = (self._regval >> 24) & 0b1111
+                if self.bm_family == "BM1397":
+                    self._pll_uart_div4 = (self._regval >> 24) & 0b1111
+                if self.bm_family == "BM1366":
+                    analyzer_frame_type = analyzer_frame_type + "_baud"
+                    self._pll_uart_div4 = (self._regval >> 20) & 0b1111
+                    bclk_sel = (self._regval >> 26) & 0b1
+                    bt8d = (self._regval >> 8) & 0xff
+                    baud : float = 0.0
+                    if bclk_sel == 0:
+                        baud = self.bm_clkifreq / ((bt8d + 1) * 8)
+                    else:
+                        baud = self._pll_uart_freq / ((self._pll_uart_div4 + 1) * (bt8d + 1) * 2)
+                    if baud > 1.0:
+                        reg_value = f"{baud:10.6f}Mbps"
+                    else:
+                        baud = baud * 1E6
+                        reg_value = f"{baud:10.0f}bps"
             elif reg_name_or_address == "misc_control":
-                analyzer_frame_type = analyzer_frame_type + "_misc"
-                bclk_sel = (self._regval >> 16) & 0b1
-                bt8d = ((self._regval >> 24) & 0b1111) + ((self._regval >> 8) & 0b11111)
-                baud : float = 0.0
-                if bclk_sel == 0:
-                    baud = self.bm_clkifreq / ((bt8d + 1) * 8)
-                else:
-                    baud = self._pll3freq / ((self._pll3div4 + 1) * (bt8d + 1) * 8)
-                if baud > 1.0:
-                    reg_value = f"{baud:10.6f}Mbps"
-                else:
-                    baud = baud * 1E6
-                    reg_value = f"{baud:10.0f}bps"
+                if self.bm_family == "BM1397":
+                    analyzer_frame_type = analyzer_frame_type + "_baud"
+                    bclk_sel = (self._regval >> 16) & 0b1
+                    bt8d = ((self._regval >> 24) & 0b1111) + ((self._regval >> 8) & 0b11111)
+                    baud : float = 0.0
+                    if bclk_sel == 0:
+                        baud = self.bm_clkifreq / ((bt8d + 1) * 8)
+                    else:
+                        baud = self._pll_uart_freq / ((self._pll_uart_div4 + 1) * (bt8d + 1) * 8)
+                    if baud > 1.0:
+                        reg_value = f"{baud:10.6f}Mbps"
+                    else:
+                        baud = baud * 1E6
+                        reg_value = f"{baud:10.0f}bps"
             elif reg_name_or_address == "core_register_control" or reg_name_or_address == "core_register_status":
                 analyzer_frame_type = analyzer_frame_type + "_core"
                 if reg_name_or_address == "core_register_control":
